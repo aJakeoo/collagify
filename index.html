@@ -186,6 +186,9 @@
   }
   #start-over:hover { color: #666; }
 
+  #btn-render { background: #1A6EF5; }
+  #btn-render:hover { opacity: 0.82; }
+
   #file-input, #music-input { display: none; }
 </style>
 </head>
@@ -261,6 +264,15 @@
       <select id="opt-res">
         <option value="1080">1080p</option>
         <option value="2160">4K</option>
+      </select>
+    </div>
+    <div class="opt-row">
+      <label>Aspect ratio</label>
+      <select id="opt-aspect">
+        <option value="16:9">16:9 Landscape</option>
+        <option value="9:16">9:16 Portrait</option>
+        <option value="1:1">1:1 Square</option>
+        <option value="4:3">4:3 Classic</option>
       </select>
     </div>
     <div class="opt-row">
@@ -441,22 +453,31 @@ function loadImg(file) {
 }
 
 // ── Pre-render blurred background (tiny thumbnail → upscale = blur) ────────
-// Drawing a 240×135 px canvas stretched to 1920×1080 gives a natural soft blur
-// via the browser's bilinear interpolation; no ctx.filter needed each frame.
-function makeBg(img) {
-  const W = 240, H = 135;
+// Drawn at ~1/8 output resolution then stretched; bilinear upscaling = blur.
+function makeBg(img, bW, bH) {
   const c  = document.createElement('canvas');
-  c.width  = W; c.height = H;
+  c.width  = bW; c.height = bH;
   const cx = c.getContext('2d');
   cx.imageSmoothingEnabled = true;
   cx.imageSmoothingQuality = 'high';
   const iw = img.naturalWidth, ih = img.naturalHeight;
-  const s  = Math.max(W / iw, H / ih);
+  const s  = Math.max(bW / iw, bH / ih);
   const dw = iw * s, dh = ih * s;
   cx.filter = 'brightness(0.55)';
-  cx.drawImage(img, (W - dw) / 2, (H - dh) / 2, dw, dh);
+  cx.drawImage(img, (bW - dw) / 2, (bH - dh) / 2, dw, dh);
   cx.filter = 'none';
   return c;
+}
+
+// ── Resolve canvas dimensions from resolution + aspect ratio settings ──────
+function outputDimensions() {
+  const base = parseInt($('opt-res').value); // short-side reference
+  const [aw, ah] = $('opt-aspect').value.split(':').map(Number);
+  const scale = base / Math.min(aw, ah);
+  return {
+    W: Math.round(aw * scale / 2) * 2,
+    H: Math.round(ah * scale / 2) * 2,
+  };
 }
 
 // ── Draw one slide at a specific Ken Burns progress [0..1] ─────────────────
@@ -592,13 +613,11 @@ async function startRender() {
     }
   }
 
-  // Decode images + prerender backgrounds
-  const imgs = [], bgs = [];
+  // Decode images
+  const imgs = [];
   for (let i = 0; i < files.length; i++) {
     try {
-      const img = await loadImg(files[i]);
-      imgs.push(img);
-      bgs.push(makeBg(img));
+      imgs.push(await loadImg(files[i]));
     } catch (e) {
       console.warn('Skipped:', files[i].name, e);
     }
@@ -614,10 +633,13 @@ async function startRender() {
   }
 
   // Settings
-  const resH       = parseInt(optRes.value);
-  const W          = resH === 2160 ? 3840 : 1920;
-  const H          = resH;
+  const { W, H } = outputDimensions();
   const fps        = 30;
+
+  // Pre-render blurred backgrounds at correct aspect ratio
+  const bgW = Math.round(W / 8 / 2) * 2;
+  const bgH = Math.round(H / 8 / 2) * 2;
+  const bgs = imgs.map(img => makeBg(img, bgW, bgH));
   const slideDur   = parseFloat(optSlideDur.value);
   const transDur   = parseFloat(optTransDur.value);
   const transType  = $('opt-trans-type').value;
