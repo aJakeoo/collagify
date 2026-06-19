@@ -244,7 +244,15 @@
       <span class="opt-val" id="val-slide-dur">4s</span>
     </div>
     <div class="opt-row">
-      <label>Transition</label>
+      <label>Transition type</label>
+      <select id="opt-trans-type">
+        <option value="kenburns">Ken Burns</option>
+        <option value="dissolve">Dissolve</option>
+        <option value="push">Push</option>
+      </select>
+    </div>
+    <div class="opt-row">
+      <label>Transition duration</label>
       <input type="range" id="opt-trans-dur" min="0.2" max="2" step="0.1" value="0.8">
       <span class="opt-val" id="val-trans-dur">0.8s</span>
     </div>
@@ -476,30 +484,75 @@ function drawSlide(ctx, img, bg, W, H, kb, kbProgress, alpha) {
   ctx.restore();
 }
 
+// ── Draw a static (no Ken Burns) slide ────────────────────────────────────
+function drawStaticSlide(ctx, img, bg, W, H, alpha) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(bg, (W - W * 1.05) / 2, (H - H * 1.05) / 2, W * 1.05, H * 1.05);
+  const iw = img.naturalWidth, ih = img.naturalHeight;
+  const s  = Math.min(W / iw, H / ih);
+  ctx.drawImage(img, (W - iw * s) / 2, (H - ih * s) / 2, iw * s, ih * s);
+  ctx.restore();
+}
+
 // ── Composite frame at elapsed time t ─────────────────────────────────────
 // Timeline: each slot = slideDur + transDur.
-// Within each slot: [0, slideDur] = pure slide; [slideDur, slideDur+transDur] = crossfade.
-function drawAtTime(ctx, imgs, bgs, W, H, t, slideDur, transDur) {
+// Within each slot: [0, slideDur] = pure slide; [slideDur, slideDur+transDur] = transition.
+function drawAtTime(ctx, imgs, bgs, W, H, t, slideDur, transDur, transType) {
   const N      = imgs.length;
   const period = slideDur + transDur;
   const total  = N * slideDur + (N - 1) * transDur;
   t = Math.max(0, Math.min(t, total));
 
-  const slot   = Math.min(Math.floor(t / period), N - 1);
-  const local  = t - slot * period;
-  const kbDir  = KB[slot % KB.length];
+  const slot  = Math.min(Math.floor(t / period), N - 1);
+  const local = t - slot * period;
 
   ctx.clearRect(0, 0, W, H);
 
-  if (local < slideDur) {
-    drawSlide(ctx, imgs[slot], bgs[slot], W, H, kbDir, local / slideDur, 1);
-  } else if (slot < N - 1) {
-    const tp     = (local - slideDur) / transDur;
-    const nextDir = KB[(slot + 1) % KB.length];
-    drawSlide(ctx, imgs[slot],     bgs[slot],     W, H, kbDir,   1,  1);
-    drawSlide(ctx, imgs[slot + 1], bgs[slot + 1], W, H, nextDir, 0, tp);
+  if (transType === 'dissolve') {
+    if (local < slideDur) {
+      drawStaticSlide(ctx, imgs[slot], bgs[slot], W, H, 1);
+    } else if (slot < N - 1) {
+      const tp = (local - slideDur) / transDur;
+      drawStaticSlide(ctx, imgs[slot],     bgs[slot],     W, H, 1);
+      drawStaticSlide(ctx, imgs[slot + 1], bgs[slot + 1], W, H, tp);
+    } else {
+      drawStaticSlide(ctx, imgs[N - 1], bgs[N - 1], W, H, 1);
+    }
+  } else if (transType === 'push') {
+    if (local < slideDur) {
+      drawStaticSlide(ctx, imgs[slot], bgs[slot], W, H, 1);
+    } else if (slot < N - 1) {
+      const tp   = (local - slideDur) / transDur;
+      const edge = W * (1 - tp);
+      ctx.save();
+      ctx.beginPath(); ctx.rect(0, 0, edge, H); ctx.clip();
+      ctx.translate(-W * tp, 0);
+      drawStaticSlide(ctx, imgs[slot], bgs[slot], W, H, 1);
+      ctx.restore();
+      ctx.save();
+      ctx.beginPath(); ctx.rect(edge, 0, W - edge, H); ctx.clip();
+      ctx.translate(edge, 0);
+      drawStaticSlide(ctx, imgs[slot + 1], bgs[slot + 1], W, H, 1);
+      ctx.restore();
+    } else {
+      drawStaticSlide(ctx, imgs[N - 1], bgs[N - 1], W, H, 1);
+    }
   } else {
-    drawSlide(ctx, imgs[N - 1], bgs[N - 1], W, H, KB[(N - 1) % KB.length], 1, 1);
+    // Ken Burns (default)
+    const kbDir = KB[slot % KB.length];
+    if (local < slideDur) {
+      drawSlide(ctx, imgs[slot], bgs[slot], W, H, kbDir, local / slideDur, 1);
+    } else if (slot < N - 1) {
+      const tp      = (local - slideDur) / transDur;
+      const nextDir = KB[(slot + 1) % KB.length];
+      drawSlide(ctx, imgs[slot],     bgs[slot],     W, H, kbDir,   1,  1);
+      drawSlide(ctx, imgs[slot + 1], bgs[slot + 1], W, H, nextDir, 0, tp);
+    } else {
+      drawSlide(ctx, imgs[N - 1], bgs[N - 1], W, H, KB[(N - 1) % KB.length], 1, 1);
+    }
   }
 }
 
@@ -567,6 +620,7 @@ async function startRender() {
   const fps        = 30;
   const slideDur   = parseFloat(optSlideDur.value);
   const transDur   = parseFloat(optTransDur.value);
+  const transType  = $('opt-trans-type').value;
   const totalDur   = imgs.length * slideDur + Math.max(0, imgs.length - 1) * transDur;
 
   // Off-screen canvas (position off-viewport to avoid display issues on some browsers)
@@ -578,7 +632,7 @@ async function startRender() {
   const ctx = canvas.getContext('2d');
 
   // Draw frame 0 before captureStream so first frame isn't blank
-  drawAtTime(ctx, imgs, bgs, W, H, 0, slideDur, transDur);
+  drawAtTime(ctx, imgs, bgs, W, H, 0, slideDur, transDur, transType);
 
   // Capture stream
   let stream;
@@ -655,6 +709,8 @@ async function startRender() {
     video.load();
     video.play().catch(() => {});
 
+    const ext = outMime.includes('webm') ? 'WebM' : 'MP4';
+    btnDownload.textContent    = 'Download ' + ext;
     progressWrap.style.display = 'none';
     videoWrap.style.display    = 'block';
     btnDownload.disabled       = false;
@@ -689,7 +745,7 @@ async function startRender() {
     const elapsed = (now - t0) / 1000;
 
     if (elapsed >= totalDur) {
-      drawAtTime(ctx, imgs, bgs, W, H, totalDur, slideDur, transDur);
+      drawAtTime(ctx, imgs, bgs, W, H, totalDur, slideDur, transDur, transType);
       if (audioCtx && audioCtx._source) {
         try { audioCtx._source.stop(audioCtx.currentTime + 0.2); } catch {}
       }
@@ -698,7 +754,7 @@ async function startRender() {
       return;
     }
 
-    drawAtTime(ctx, imgs, bgs, W, H, elapsed, slideDur, transDur);
+    drawAtTime(ctx, imgs, bgs, W, H, elapsed, slideDur, transDur, transType);
 
     const rem  = Math.ceil(totalDur - elapsed);
     const mins = Math.floor(rem / 60);
