@@ -207,7 +207,7 @@
       <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
     </svg>
     <p><strong>Click to choose files</strong> or drag and drop here</p>
-    <p style="font-size:13px;color:#aaa">JPG · PNG · HEIC &mdash; up to 60 images</p>
+    <p style="font-size:13px;color:#aaa">JPG · PNG · HEIC · up to 60 images</p>
   </div>
   <span id="file-count"></span>
   <button class="btn" id="btn-choose">Choose Files</button>
@@ -434,7 +434,7 @@ function loadImg(file) {
 
 // ── Pre-render blurred background (tiny thumbnail → upscale = blur) ────────
 // Drawing a 240×135 px canvas stretched to 1920×1080 gives a natural soft blur
-// via the browser's bilinear interpolation — no ctx.filter needed each frame.
+// via the browser's bilinear interpolation; no ctx.filter needed each frame.
 function makeBg(img) {
   const W = 240, H = 135;
   const c  = document.createElement('canvas');
@@ -679,7 +679,7 @@ async function startRender() {
   }
 
   // Note to user that recording runs in real-time
-  bannerInfo.innerHTML = 'Recording runs in real-time &mdash; keep this tab active until it finishes.';
+  bannerInfo.innerHTML = 'Recording runs in real-time. Keep this tab active until it finishes.';
   bannerInfo.style.display = 'block';
 
   // ── Animation loop ──────────────────────────────────────────────────────
