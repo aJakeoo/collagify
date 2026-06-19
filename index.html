@@ -151,6 +151,19 @@
   }
   .opt-row label { font-size: 14px; color: #444; white-space: nowrap; }
   .opt-row input[type=range] { flex: 1; accent-color: #2C2C2C; }
+  .opt-row input[type=text] {
+    flex: 1;
+    background: #FFFFFF;
+    border: 1px solid rgba(44,44,44,0.2);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 14px;
+    color: #2C2C2C;
+    font-family: inherit;
+    outline: none;
+    min-width: 0;
+  }
+  .opt-row input[type=text]::placeholder { color: #bbb; }
   .opt-row select {
     background: #FFFFFF;
     border: 1px solid rgba(44,44,44,0.2);
@@ -241,6 +254,10 @@
 
   <div id="options-panel">
     <h3>Options</h3>
+    <div class="opt-row">
+      <label>Video name</label>
+      <input type="text" id="opt-title" placeholder="Optional" maxlength="60">
+    </div>
     <div class="opt-row">
       <label>Slide duration</label>
       <input type="range" id="opt-slide-dur" min="1" max="10" step="0.5" value="4">
@@ -452,21 +469,47 @@ function loadImg(file) {
   });
 }
 
-// ── Pre-render blurred background (tiny thumbnail → upscale = blur) ────────
-// Drawn at ~1/8 output resolution then stretched; bilinear upscaling = blur.
+// ── Pre-render blurred background ─────────────────────────────────────────
+// Two-pass: draw image into a mid-size canvas, then blur+downsample into the
+// final tiny canvas. When that tiny canvas is upscaled 12x at draw time, the
+// combined effect is a heavy, smooth blur with no per-frame filter cost.
 function makeBg(img, bW, bH) {
-  const c  = document.createElement('canvas');
-  c.width  = bW; c.height = bH;
+  const iw = img.naturalWidth, ih = img.naturalHeight;
+
+  // Pass 1: draw at 3x final size so the blur kernel has something to work with
+  const mid = document.createElement('canvas');
+  mid.width = bW * 3; mid.height = bH * 3;
+  const mctx = mid.getContext('2d');
+  const s1 = Math.max(mid.width / iw, mid.height / ih);
+  mctx.filter = 'brightness(0.5)';
+  mctx.drawImage(img, (mid.width - iw * s1) / 2, (mid.height - ih * s1) / 2, iw * s1, ih * s1);
+
+  // Pass 2: blur+shrink into the final tiny canvas
+  const c = document.createElement('canvas');
+  c.width = bW; c.height = bH;
   const cx = c.getContext('2d');
   cx.imageSmoothingEnabled = true;
   cx.imageSmoothingQuality = 'high';
-  const iw = img.naturalWidth, ih = img.naturalHeight;
-  const s  = Math.max(bW / iw, bH / ih);
-  const dw = iw * s, dh = ih * s;
-  cx.filter = 'brightness(0.55)';
-  cx.drawImage(img, (bW - dw) / 2, (bH - dh) / 2, dw, dh);
-  cx.filter = 'none';
+  cx.filter = 'blur(6px)';
+  cx.drawImage(mid, 0, 0, bW, bH);
   return c;
+}
+
+// ── Draw title text on first slide ────────────────────────────────────────
+function drawTitle(ctx, text, W, H, alpha) {
+  if (!text || alpha <= 0) return;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  const fs = Math.max(24, Math.round(H / 18));
+  ctx.font = `500 ${fs}px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  ctx.shadowColor = 'rgba(0,0,0,0.55)';
+  ctx.shadowBlur  = fs * 0.7;
+  ctx.shadowOffsetY = fs * 0.04;
+  ctx.fillStyle = 'rgba(255,255,255,0.95)';
+  ctx.fillText(text, W / 2, H - fs * 1.4, W * 0.82);
+  ctx.restore();
 }
 
 // ── Resolve canvas dimensions from resolution + aspect ratio settings ──────
@@ -521,7 +564,7 @@ function drawStaticSlide(ctx, img, bg, W, H, alpha) {
 // ── Composite frame at elapsed time t ─────────────────────────────────────
 // Timeline: each slot = slideDur + transDur.
 // Within each slot: [0, slideDur] = pure slide; [slideDur, slideDur+transDur] = transition.
-function drawAtTime(ctx, imgs, bgs, W, H, t, slideDur, transDur, transType) {
+function drawAtTime(ctx, imgs, bgs, W, H, t, slideDur, transDur, transType, titleText) {
   const N      = imgs.length;
   const period = slideDur + transDur;
   const total  = N * slideDur + (N - 1) * transDur;
@@ -574,6 +617,11 @@ function drawAtTime(ctx, imgs, bgs, W, H, t, slideDur, transDur, transType) {
     } else {
       drawSlide(ctx, imgs[N - 1], bgs[N - 1], W, H, KB[(N - 1) % KB.length], 1, 1);
     }
+  }
+
+  // Title on first slide: fade in over 0.5 s, visible for full slide, gone at transition
+  if (slot === 0 && local < slideDur) {
+    drawTitle(ctx, titleText, W, H, Math.min(1, local / 0.5));
   }
 }
 
@@ -636,13 +684,14 @@ async function startRender() {
   const { W, H } = outputDimensions();
   const fps        = 30;
 
-  // Pre-render blurred backgrounds at correct aspect ratio
-  const bgW = Math.round(W / 8 / 2) * 2;
-  const bgH = Math.round(H / 8 / 2) * 2;
+  // Pre-render blurred backgrounds at correct aspect ratio (~1/12 output res)
+  const bgW = Math.round(W / 12 / 2) * 2;
+  const bgH = Math.round(H / 12 / 2) * 2;
   const bgs = imgs.map(img => makeBg(img, bgW, bgH));
   const slideDur   = parseFloat(optSlideDur.value);
   const transDur   = parseFloat(optTransDur.value);
   const transType  = $('opt-trans-type').value;
+  const titleText  = $('opt-title').value.trim();
   const totalDur   = imgs.length * slideDur + Math.max(0, imgs.length - 1) * transDur;
 
   // Off-screen canvas (position off-viewport to avoid display issues on some browsers)
@@ -654,7 +703,7 @@ async function startRender() {
   const ctx = canvas.getContext('2d');
 
   // Draw frame 0 before captureStream so first frame isn't blank
-  drawAtTime(ctx, imgs, bgs, W, H, 0, slideDur, transDur, transType);
+  drawAtTime(ctx, imgs, bgs, W, H, 0, slideDur, transDur, transType, titleText);
 
   // Capture stream
   let stream;
@@ -767,7 +816,7 @@ async function startRender() {
     const elapsed = (now - t0) / 1000;
 
     if (elapsed >= totalDur) {
-      drawAtTime(ctx, imgs, bgs, W, H, totalDur, slideDur, transDur, transType);
+      drawAtTime(ctx, imgs, bgs, W, H, totalDur, slideDur, transDur, transType, titleText);
       if (audioCtx && audioCtx._source) {
         try { audioCtx._source.stop(audioCtx.currentTime + 0.2); } catch {}
       }
@@ -776,7 +825,7 @@ async function startRender() {
       return;
     }
 
-    drawAtTime(ctx, imgs, bgs, W, H, elapsed, slideDur, transDur, transType);
+    drawAtTime(ctx, imgs, bgs, W, H, elapsed, slideDur, transDur, transType, titleText);
 
     const rem  = Math.ceil(totalDur - elapsed);
     const mins = Math.floor(rem / 60);
@@ -805,10 +854,13 @@ btnRebuild.onclick = () => {
 // ── Download ───────────────────────────────────────────────────────────────
 btnDownload.onclick = () => {
   if (!outputBlob) return;
-  const ext = outputMime.includes('webm') ? 'webm' : 'mp4';
-  const a   = document.createElement('a');
-  a.href     = URL.createObjectURL(outputBlob);
-  a.download = 'collagify.' + ext;
+  const ext      = outputMime.includes('webm') ? 'webm' : 'mp4';
+  const rawName  = $('opt-title').value.trim();
+  const safeName = rawName.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-');
+  const filename = (safeName ? safeName + '-' : '') + 'collagify.' + ext;
+  const a        = document.createElement('a');
+  a.href         = URL.createObjectURL(outputBlob);
+  a.download     = filename;
   a.click();
 };
 </script>
