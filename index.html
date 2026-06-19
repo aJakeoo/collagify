@@ -200,6 +200,7 @@
 <!-- STATE 2: UPLOAD -->
 <div id="upload">
   <h2>Choose your photos</h2>
+  <button class="btn" id="btn-render" disabled>Build Collage</button>
   <div id="dropzone" tabindex="0" role="button" aria-label="Upload images">
     <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#2C2C2C" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
       <polyline points="16 16 12 12 8 16"/>
@@ -207,11 +208,10 @@
       <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
     </svg>
     <p><strong>Click to choose files</strong> or drag and drop here</p>
-    <p style="font-size:13px;color:#aaa">JPG · PNG · HEIC · up to 60 images</p>
+    <p style="font-size:13px;color:#aaa">JPG · PNG · HEIC · up to 200 images</p>
   </div>
   <span id="file-count"></span>
   <button class="btn" id="btn-choose">Choose Files</button>
-  <button class="btn" id="btn-render" style="display:none">Build Collage</button>
   <input type="file" id="file-input" accept="image/jpeg,image/png,image/heic,image/heif,.heic,.heif,.jpg,.jpeg,.png" multiple>
 </div>
 
@@ -232,7 +232,7 @@
   <div id="controls">
     <button class="btn" id="btn-options">Options</button>
     <button class="btn" id="btn-add-music">Add Music</button>
-    <button class="btn" id="btn-download" disabled>Download</button>
+    <button class="btn" id="btn-download" style="display:none">Download MP4</button>
     <button class="btn" id="btn-rebuild" style="display:none">Rebuild</button>
   </div>
 
@@ -347,10 +347,10 @@ btnStartOver.onclick = () => {
   musicFile     = null;
   outputBlob    = null;
   fileCount.textContent    = '';
-  btnRender.style.display  = 'none';
+  btnRender.disabled       = true;
   videoWrap.style.display  = 'none';
   progressWrap.style.display = 'flex';
-  btnDownload.disabled     = true;
+  btnDownload.style.display = 'none';
   btnRebuild.style.display = 'none';
   optPanel.style.display   = 'none';
   musicVolRow.style.display = 'none';
@@ -380,9 +380,9 @@ function handleFiles(files) {
     /\.(jpe?g|png|heic|heif)$/i.test(f.name)
   );
   if (!imgs.length) return;
-  selectedFiles = imgs.slice(0, 60);
+  selectedFiles = imgs.slice(0, 200);
   fileCount.textContent = `${selectedFiles.length} image${selectedFiles.length !== 1 ? 's' : ''} selected`;
-  btnRender.style.display = 'inline-block';
+  btnRender.disabled = false;
 }
 
 btnRender.onclick = startRender;
@@ -567,7 +567,7 @@ async function startRender() {
   bannerError.style.display   = 'none';
   bannerInfo.style.display    = 'none';
   btnRebuild.style.display    = 'none';
-  btnDownload.disabled        = true;
+  btnDownload.style.display   = 'none';
   setProgress(0);
   progressLbl.textContent     = 'Decoding images…';
 
@@ -711,9 +711,9 @@ async function startRender() {
 
     const ext = outMime.includes('webm') ? 'WebM' : 'MP4';
     btnDownload.textContent    = 'Download ' + ext;
+    btnDownload.style.display  = 'inline-block';
     progressWrap.style.display = 'none';
     videoWrap.style.display    = 'block';
-    btnDownload.disabled       = false;
     btnRebuild.style.display   = 'inline-block';
 
     if (audioCtx) { try { audioCtx.close(); } catch {} activeAudioCtx = null; }
